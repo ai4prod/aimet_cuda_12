@@ -46,6 +46,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -ggdb -D_GLIBCXX_USE_CXX11_ABI=0")
 set(AIMET_INSTALL_DIR ${CMAKE_BINARY_DIR}/staging/universal)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error")
+
 if(NOT DEFINED AIMET_PYTHONPATH)
   set(AIMET_PYTHONPATH "PYTHONPATH=${CMAKE_BINARY_DIR}/artifacts" CACHE STRING "python path")
 endif()
@@ -82,19 +84,16 @@ endif(NOT (DEFINED ENABLE_CUDA))
 
 if (ENABLE_CUDA)
   message("Compiling with CUDA enabled")
-
+  set(CMAKE_CUDA_ARCHITECTURES 89)
   find_package(CUDAToolkit)
-  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 52 60 61 70 72)
-  endif()
-
+  message(STATUS "** Initial CMAKE_CUDA_ARCHITECTURES = ${CMAKE_CUDA_ARCHITECTURES} **")
   enable_language(CUDA)
-
 else(ENABLE_CUDA)
   message("Compiling with CUDA disabled")
 
 endif(ENABLE_CUDA)
 
+message("CUDA NVCC FLAGS  ${CUDA_NVCC_FLAGS}")
 find_package(Python3 COMPONENTS Interpreter Development)
 message("Found python: ${Python3_FOUND}, at ${Python3_LIBRARIES}")
 
@@ -116,16 +115,40 @@ if (NOT (DEFINED ENABLE_TORCH))
 endif(NOT (DEFINED ENABLE_TORCH))
 
 if (ENABLE_TORCH)
-  set(AIMET_PYTHONPATH "${AIMET_PYTHONPATH}:${CMAKE_CURRENT_SOURCE_DIR}/TrainingExtensions/torch/src/python:${CMAKE_CURRENT_SOURCE_DIR}/TrainingExtensions/onnx/src/python")
+  execute_process(COMMAND "${Python3_EXECUTABLE}" "-c" "import torch; print(torch.__version__)"
+  OUTPUT_VARIABLE TORCH_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  message(STATUS "Found Torch version: ${TORCH_VERSION}")
+
+  set(AIMET_PYTHONPATH "${AIMET_PYTHONPATH}:${CMAKE_CURRENT_SOURCE_DIR}/TrainingExtensions/torch/src/python")
   execute_process(COMMAND ${Python3_EXECUTABLE} "-c" "import torch;print(torch.utils.cmake_prefix_path)"
                   RESULT_VARIABLE TORCH_NOT_FOUND
                   OUTPUT_VARIABLE TORCH_CMAKE_DIR
                   OUTPUT_STRIP_TRAILING_WHITESPACE
                   )
+
+  # Update CMAKE_CUDA_ARCHITECTURES with the supported architectures that this pytorch version was compiled for
+  #   1. Remove sm_ prefixes from the CUDA architecture names.
+  #   2. Change python list into a CMake list.
+  execute_process(COMMAND ${Python3_EXECUTABLE} "-c" "import torch; print(';'.join(arch.split('_')[1] for arch in torch.cuda.get_arch_list()))"
+                  RESULT_VARIABLE TORCH_NOT_FOUND
+                  OUTPUT_VARIABLE CMAKE_CUDA_ARCHITECTURES
+                  OUTPUT_STRIP_TRAILING_WHITESPACE
+                  )
+  message(STATUS "** Updated CMAKE_CUDA_ARCHITECTURES to ${CMAKE_CUDA_ARCHITECTURES} **")
+
+  # Set torch cuda architecture list variable
+  # Convert to the proper format (Reference: https://stackoverflow.com/a/74962874)
+  #   - Insert "." between the digits of the architecture version (ex. 50 --> 5.0)
+  #   - Repleace semi-colons in list with spaces
+  set(TORCH_CUDA_ARCH_LIST "8.9")
+  message(STATUS "** Updated TORCH_CUDA_ARCH_LIST to ${TORCH_CUDA_ARCH_LIST} **")
+
   find_package(Torch REQUIRED PATHS ${TORCH_CMAKE_DIR} NO_DEFAULT_PATH)
   get_filename_component(TORCH_DIR ${TORCH_CMAKE_DIR}/../../ ABSOLUTE)
+
 else (ENABLE_TORCH)
-  message("AIMET Torch build disabled")
+  message(STATUS "AIMET Torch build disabled inside AIMET")
 endif (ENABLE_TORCH)
 
 # ----------------------------------
